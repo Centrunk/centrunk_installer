@@ -7,17 +7,18 @@ BASE_DIR='/opt'
 GIT_URL='https://github.com/DVMProject/dvmhost.git'
 INSTALL_LOC='/opt/dvm'
 CONFIG_DIR='/opt/dvm/configs'
+FW_DIR='/opt/dvmfirmware-hs/'
 FW_GIT_URL='https://github.com/DVMProject/dvmfirmware-hs.git'
 FW_TOOLS_F10X='https://github.com/DVMProject/STM32F10X_Platform.git'
 FW_TOOLS_F4='https://github.com/DVMProject/STM32F4XX_Platform.git'
 CONFIG_REPO='https://github.com/lastation4/centrunk-default-config.git'
-DEBUG=1
+
 
 ##### FUNCTION DEFINITIONS #####
 
 clean_environment()
 {
-    if [[ $DEBUG -eq 0 ]]
+    if [[ ! -z $DEBUG || $REMOVE -eq 1 ]]
     then
         read -p "This installer will REMOVE any files located in the following directories:
         * /opt/dvm
@@ -26,28 +27,62 @@ clean_environment()
         Are you sure you want to continue? [Y/N]: " resp2
         case $resp2 in
             Y | y)
-              write_log_event "User has elected to continue."
+              
+              if [[ $REMOVE -eq 1 ]]
+              then
+                write_log_event "--rm commandline option selected, removing all Centrunk components..."
+              elif [[ ! -z $DEBUG ]]
+              then
+                write_log_event "Removing files..."
+              fi
+              
               rm -rf $INSTALL_LOC
-              rm -rf /opt/dvmfirmware-hs/
-              write_log_event "Cleaned install directory $INSTALL_LOC."
+              rm -rf $FW_DIR
+              write_log_event "Cleaned install directory $INSTALL_LOC and $FW_DIR."
+              sleep 1
+              write_log_event "Disabling and removing the Centrunk Service..."
+              if [[ -f /etc/systemd/system/centrunk.service ]]
+              then
+                systemctl stop centrunk.service
+                systemctl disable centrunk.service
+                rm -rf /etc/systemd/system/centrunk.service
+              elif [[ -f /etc/systemd/system/p25.service ]]
+              then
+                write_log_event "Found previous versions of the systemd unit file...cleaning up..."
+                systemctl stop p25.service
+                systemctl disable p25.service
+                rm -rf /etc/systemd/system/p25.service
+              fi
               ;;
             N | n)
-              write_log_event "User has elected to exit."
               echo "Stopping install...Nothing was changed."
               exit 42
               ;;
             *)
-              write_log_event "Invalid entry, displaying help to user."
+              write_log_event "Invalid entry, see help below..."
               usage
               exit 96
               ;;
         esac
     fi
+
 }
 
 write_log_event()
 {
-    echo $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+  echo "[LOG]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+  echo $1
+}
+
+write_debug()
+{
+  echo "[DEBUG]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+}
+
+write_stderr()
+{
+  echo "[STDERR]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+
 }
 
 replace_config()
@@ -70,7 +105,7 @@ replace_config()
     sed -i "s/REDACTED/CENTRUNK/g" $1
     sed -i "s/P_CENTRUNK/62030/g" $1
     write_log_event "Done replacing default values in config."
-}
+} 2>write_stderr
 
 usage()
 {
@@ -87,12 +122,15 @@ usage()
     --net <NET_ID>
     --nac <NAC_CODE>
     --atg <SUPER_GROUP>
-    [--flash]
+    
     --zt <ZEROTIER_ID>
     --chid <CHANNEL_NUMBER>
     --vcn <VOICE_CHANNEL_NUMBER>
-    --help]
+    --help
+    [--flash]]
     | [--interactive]
+    | [--rm]
+    | [--file <VAR_FILE>]
     "
 }
 
@@ -115,9 +153,11 @@ install_centrunk()
 
   #build the boi
 
-  write_log_event "Building dvmhost..."
-  echo "Building DVMhost...this may take some time..."
+  write_log_event "Building dvmhost...this may take some time..."
+  set -e
   make
+  set +e
+  write_log_event "Finished building dvmhost."
 
   #fixup perms
   write_log_event "Permissions updating..."
@@ -154,7 +194,7 @@ install_centrunk()
 
   #install the unit file
 
-  write_log_event "Installing the P25 systemd Service..."
+  write_log_event "Installing the Centrunk systemd Service..."
   
   if [[ -f /etc/systemd/system/centrunk.service ]]
   then
@@ -171,17 +211,17 @@ install_centrunk()
   systemctl enable centrunk.service
   #output commands
   write_log_event "!!!DVMhost install completed.!!!"
-  echo "Done installing DVMhost."
+
 
   # ollie outie if we aren't flashing
+
   if [[ $FLASH -ne 1 ]]
   then
       write_log_event "Not flashing the modem per user input...Quitting..."
       echo "Not flashing the modem...exiting..."
       exit 0
   else
-      write_log_event "Flashing the modem."
-      echo "Flashing the modem. Please standby while we gather some files..."    
+      write_log_event "Flashing the modem....Please standby while we gather some files..." 
   fi
 
   write_log_event "Entering the Firmware Block..."
@@ -190,34 +230,29 @@ install_centrunk()
   write_log_event "Cloning firmware from GitHub..."
   cd /opt
   git clone $FW_GIT_URL
-  cd /opt/dvmfirmware-hs/
+  cd $FW_DIR
   git clone $FW_TOOLS_F10X
 
   write_log_event "Starting the firmware build process..."
   #build the firmware
   echo "Building the firmware in 5 seconds..."
   sleep 5
+  set -e
   make -f Makefile.STM32FX mmdvm-hs-hat-dual
+  set +e
   write_log_event "Firmware build completed!"
 
   #flash the firmware
-  write_log_event "About to flash the firmware...asking for consent..."
-  read -p "FLASHING THE FIRMWARE NOW. DO YOU WANT TO CONTINUE? [Y/N]: " flashing
-  case $flashing in
-      Y|y)
-        write_log_event "User has elected to flash firmware...Proceeding..."
-        echo "FLASHING NOW. DO NOT REMOVE POWER!"
-        if [[ -f dvm-firmware-hs_f1.bin ]]
-          then
-          stm32flash -v -w dvm-firmware-hs_f1.bin -i 20,-21,21,-20 -R $PATH_TO_MODEM -b 115200
-          write_log_event "Flash completed..."
-        fi
-        ;;
-      N|n)
-        write_log_event "User has elected to abort..."
-        echo "Aborting flash, but continuing..."
-  esac
-
+  write_log_event "About to flash the firmware..."
+  write_log_event "User has elected to flash firmware...Proceeding..."
+  echo "FLASHING NOW. DO NOT REMOVE POWER!"
+  if [[ -f dvm-firmware-hs_f1.bin ]]
+  then
+    set -e
+    stm32flash -v -w dvm-firmware-hs_f1.bin -i 20,-21,21,-20 -R $PATH_TO_MODEM -b 115200
+    set +e
+    write_log_event "Flash completed..."
+  fi
   write_log_event "Done with Flash Block..."
 
   ##### ZEROTIER BLOCK #####
@@ -235,11 +270,10 @@ install_centrunk()
       zerotier-cli join $ZEROTIER
   fi
 
-  echo "Everything should be done installing...\\n\\nTo start dvmhost, run \"sudo systemctl start centrunk.service\""
+  echo "Everything should be done installing...
+  To start dvmhost, run \"sudo systemctl start centrunk.service\""
   exit 0
-
-  
-}
+} 2>write_stderr 
 
 echo "Welcome to the Centrunk Installer." 
 echo "The options you selected are as follows: "
@@ -248,9 +282,22 @@ write_log_event "Beginning installation..."
 ##### VARIABLE ASSIGNMENT #####
 
 POSITIONAL_ARGS=()
-
+write_log_event "Command line install selected...Reading in variables..."
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --debug)
+      DEBUG=1
+      shift
+      ;;  
+    --file)
+      VAR_FILE=$2
+      shift
+      shift
+      ;; 
+    --rm)
+      UNINSTALL=1
+      shift
+      ;;   
     --interactive)
       INTERACTIVE=1
       shift
@@ -378,6 +425,7 @@ done
 
 if [[ $INTERACTIVE -eq 1 ]]
 then
+    write_log_event "Wacker Mode Engaged..."
     echo \
     "Welcome to wacker mode...I mean Interactive Mode.
     
@@ -445,15 +493,18 @@ then
 
     read -p "Are we flashing a hotspot today? **WARNING** ONLY MMDVM-DUAL-HAT IS SUPPORTED AT THIS TIME **WARNING** IF YOU ARE UNSURE PRESS N! [Y/N]: " respA
 
+
     while true
     do
         case $respA in
             Y | y)
             FLASH=1
+            write_log_event "User selected to flash."
             break
             ;;
             N | n)
             FLASH=0
+            write_log_event "User selected not to flash."
             break
             ;;
             *)
@@ -491,10 +542,15 @@ then
     # prompt for RCON port
     read -p "Last one! Equipment ID: " EQUIP_ID
     # prompt for equipment ID
-
+    write_log_event "Finished gathering variables for wacker mode."
     echo "Alright we're done gathering information. Please sit back and relax while we set everything up for you."
-
+elif [[ ! -z $VAR_FILE ]]
+then
+  write_log_event "Configuration File Install selected..."
+  source $VAR_FILE
 else
+  
+  write_log_event "Commandline Install Selected..."
   echo \
   "TYPE=$TYPE
   ZT=$ZEROTIER
