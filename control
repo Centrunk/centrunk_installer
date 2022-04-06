@@ -1,0 +1,5 @@
+Package: dvmhost-centrunk
+Version: 0.1
+Maintainer: Steven Wilson
+Architecture: arm
+Description: A package that contains all the software to setup a DVM hotspot on the Centrunk TRS. 
