@@ -1,0 +1,156 @@
+#!/bin/bash
+
+##### VARIABLE ASSIGNMENT #####
+##### DO NOT CHANGE THESE #####
+
+BASE_DIR='/opt'
+GIT_URL='https://github.com/DVMProject/dvmhost.git'
+INSTALL_LOC='/opt/dvm'
+CONFIG_DIR='/opt/dvm/configs'
+FW_DIR='/opt/dvmfirmware-hs/'
+FW_GIT_URL='https://github.com/DVMProject/dvmfirmware-hs.git'
+FW_TOOLS_F10X='https://github.com/DVMProject/STM32F10X_Platform.git'
+FW_TOOLS_F4='https://github.com/DVMProject/STM32F4XX_Platform.git'
+FW_TOOLS_DIR='/opt/dvmfirmware-hs/tools'
+CONFIG_REPO='https://github.com/lastation4/dvm-p25-config.git'
+FW_REPO="dvmproject/dvmfirmware-hs"
+TOOLS_DIR="/opt/dvmfirmware-hs/"
+##### FUNCTION DEFINITIONS #####
+# flash firmware
+# $1 path to firmware
+# $2 flash command
+
+flash_firmware()
+{
+  #flash the firmware
+  write_log_event "About to flash the firmware..."
+  echo "FLASHING NOW. DO NOT REMOVE POWER!"
+  if [[ -f $1 ]]
+  then
+    #handle usb boards
+    if [[ "$1" == *"usb"* ]]
+    then
+      git clone $FW_TOOLS_F10X $FW_TOOLS_DIR
+      write_log_event "Flashing USB Bootloader now..."
+      stm32flash -v -w $FW_TOOLS_DIR/utils/bootloader/generic_boot20_pc13_long_rst.bin -i 20,-21,21,-20 -g 0x0 $PATH_TO_MODEM
+    fi
+    set -e
+    command $2
+    set +e
+    write_log_event "Flash completed..."
+  fi
+  write_log_event "Done with Flash Block..."
+}
+
+# test release download
+
+# $1 file name
+test_release_download()
+{
+  mkdir $FW_DIR
+  cd $FW_DIR
+  curl -s https://api.github.com/repos/$FW_REPO/releases/latest \
+    | grep "browser_download_url.*$1" \
+    | cut -d : -f 2,3 \
+    | tr -d \" \
+    | wget -qi -
+}
+
+write_log_event()
+{
+  echo "[LOG]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/p25_flashtool.log
+  echo $1
+}
+
+write_debug()
+{
+  echo "[DEBUG]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+}
+
+write_stderr()
+{
+  echo "[STDERR]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+
+}
+
+usage()
+{
+    echo "p25_flashtool --help [--flash --flashfile <FLASHFILE> --modem <PATH_TO_MODEM>]"
+}
+
+echo "Welcome to the Centrunk Installer." 
+echo "The options you selected are as follows: "
+write_log_event "Beginning installation..."
+
+##### VARIABLE ASSIGNMENT #####
+POSITIONAL_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --flashfile)
+      FLASHFILE=$2
+      shift
+      shift
+      ;;
+    --modem)
+      PATH_TO_MODEM=$2
+      shift
+      shift
+      ;;
+    --flash)
+      FLASH=1
+      shift
+      ;;
+    --help)
+      usage
+      exit 1
+      ;;
+    -*|--*)
+      usage
+      exit 1
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1") # save positional arg
+      shift # past argument
+      ;;
+  esac
+done
+
+# ollie outie if we aren't flashing
+
+if [[ $FLASH -ne 1 ]]
+then
+    write_log_event "Not flashing the modem per user input...Quitting..."
+    echo "Not flashing the modem...exiting..."
+    exit 0
+else
+    write_log_event "Flashing the modem....Please standby while we gather some files..." 
+fi
+
+write_log_event "Shutting down Centrunk Service..."
+systemctl stop p25.service
+systemctl disable p25.service
+write_log_event "Entering the Firmware Block..."
+###### FIRMWARE BLOCK #####
+#clone out the firmware and tools
+
+write_debug "Fetching lastest release from GitHub... "
+test_release_download $FLASHFILE 
+set -e
+case $FLASHFILE in
+  *hs-hat-dual.bin)
+    flash_firmware $FW_DIR/$FLASHFILE "stm32flash -v -w $FLASHFILE -i 20,-21,21,-20 -R $PATH_TO_MODEM"
+  ;;
+  *hs-hat-dual_usb.bin)
+    flash_firmware $FLASHFILE " stm32flash -v -w $FLASHFILE -g 0x0 -i 20,-21,21,-20 -S 0x08002000 -R $PATH_TO_MODEM"
+  ;;
+  *hs-hat.bin)
+    flash_firmware $FLASHFILE "stm32flash -v -w $FLASHFILE -i 20,-21,21,-20 -R $PATH_TO_MODEM"
+  ;;
+  *hs-hat_usb.bin)
+    flash_firmware $FLASHFILE " stm32flash -v -w $FLASHFILE -g 0x0 -i 20,-21,21,-20 -S 0x08002000 -R $PATH_TO_MODEM"
+  ;;
+esac
+set +e
+systemctl enable p25.service
+systemctl start p25.service
+exit 0
