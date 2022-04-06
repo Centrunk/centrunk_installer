@@ -220,7 +220,7 @@ then
     
     First off, let's get some information..."
 
-    read "Is this your only hotspot that you will be connecting to Centrunk? [Y/N]: " respA
+    read -p "Is this your only hotspot that you will be connecting to Centrunk? [Y/N]: " respA
 
     while true
     do
@@ -232,7 +232,7 @@ then
             N | n)
                 while true
                 do
-                    read "Is this a Voice or Control Channel? [V/C]: " respA1
+                    read -p "Is this a Voice or Control Channel? [V/C]: " respA1
                     case $respA1 in
                         V)
                             TYPE=VOICE
@@ -257,31 +257,31 @@ then
 
     echo "Thanks for that information. Next up we'll be grabbing some defaults to get you started..."
 
-    read "I need your ZeroTier connection ID. Ask for this in Discord. : " ZEROTIER
+    read -p "I need your ZeroTier connection ID. Ask for this in Discord. : " ZEROTIER
 
-    read "Then, I'll need the FNE's IP address. Ask for this in Discord. : " IP_ADDRESS
+    read -p "Then, I'll need the FNE's IP address. Ask for this in Discord. : " IP_ADDRESS
 
-    read "Next, I'll need to know the location of your modem: " PATH_TO_MODEM
+    read -p "Next, I'll need to know the location of your modem: " PATH_TO_MODEM
 
-    read "After that, I'll need your RX Freqency: " RX_FREQ
+    read -p "After that, I'll need your RX Freqency: " RX_FREQ
 
-    read "Now I need your TX Frequency: " TX_FREQ
+    read -p "Now I need your TX Frequency: " TX_FREQ
 
     echo "Okay, just a few more, I promise..."
 
-    read "RFSS ID: " RFSS_ID
+    read -p "RFSS ID: " RFSS_ID
 
-    read "Site ID: " SITE_ID
+    read -p "Site ID: " SITE_ID
 
-    read "System ID: " SYS_ID
+    read -p "System ID: " SYS_ID
 
-    read "Network ID: " NET_ID
+    read -p "Network ID: " NET_ID
 
-    read "NAC (Network Access Code): " NAC_CODE
+    read -p "NAC (Network Access Code): " NAC_CODE
 
-    read "Super Group: " SUPER_GROUP
+    read -p "Super Group: " SUPER_GROUP
 
-    read "Are we flashing a hotspot today? **WARNING** ONLY MMDVM-DUAL-HAT IS SUPPORTED AT THIS TIME **WARNING** IF YOU ARE UNSURE PRESS N! [Y/N]: " respA
+    read -p "Are we flashing a hotspot today? **WARNING** ONLY MMDVM-DUAL-HAT IS SUPPORTED AT THIS TIME **WARNING** IF YOU ARE UNSURE PRESS N! [Y/N]: " respA
 
     while true
     do
@@ -296,7 +296,7 @@ then
             ;;
             *)
                 echo "Please type Y or N. "
-                read "Are we flashing a hotspot today? **WARNING** ONLY MMDVM-DUAL-HAT IS SUPPORTED AT THIS TIME **WARNING** IF YOU ARE UNSURE PRESS N! [Y/N]: " respA
+                read -p "Are we flashing a hotspot today? **WARNING** ONLY MMDVM-DUAL-HAT IS SUPPORTED AT THIS TIME **WARNING** IF YOU ARE UNSURE PRESS N! [Y/N]: " respA
                 continue        
             ;;
         esac  
@@ -305,6 +305,8 @@ then
     echo "Please wait while the hamster wheels are turning..."
 
     echo "Thank you for trying Interactive Mode Beta. Please leave feedback on Discord."
+
+    exit 0
 
     # calculate channel id from tx frequency
 
