@@ -55,7 +55,7 @@ replace_config()
 usage()
 {
     echo "centrunk_installer 
-    --voice|--control|--voc 
+    [--voice|--control|--voc 
     --id <EQUIP_ID> 
     --ip <IP_ADDRESS> 
     --rcon <RCON_PORT>
@@ -71,7 +71,8 @@ usage()
     --zt <ZEROTIER_ID>
     --chid <CHANNEL_NUMBER>
     --vcn <VOICE_CHANNEL_NUMBER>
-    --help
+    --help]
+    | [--interactive]
     "
 }
 
@@ -85,6 +86,10 @@ POSITIONAL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case $1 in
+    --interactive)
+      INTERACTIVE=1
+      shift
+      ;;   
     --zt)
       ZEROTIER=$2
       shift
@@ -205,6 +210,111 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ $INTERACTIVE -eq 1 ]]
+then
+    echo \
+    "Welcome to wacker mode...I mean Interactive Mode.
+    
+    This is a mode used for 1 on 1 installs, or if you know your values and want to enter them quickly.
+    
+    First off, let's get some information..."
+
+    read "Is this your only hotspot that you will be connecting to Centrunk? [Y/N]: " respA
+
+    while true
+    do
+        case $respA in
+            Y | y)
+            TYPE=VOC
+            break
+            ;;
+            N | n)
+                while true
+                do
+                    read "Is this a Voice or Control Channel? [V/C]: " respA1
+                    case $respA1 in
+                        V)
+                            TYPE=VOICE
+                            break
+                        ;;
+                        C)
+                            TYPE=CONTROL
+                            break
+                        ;;
+                        *)
+                            continue
+                        ;;
+                    esac
+
+                done
+            ;;
+            *)
+                continue        
+            ;;
+        esac  
+    done
+
+    echo "Thanks for that information. Next up we'll be grabbing some defaults to get you started..."
+
+    read "I need your ZeroTier connection ID. Ask for this in Discord. : " ZEROTIER
+
+    read "Then, I'll need the FNE's IP address. Ask for this in Discord. : " IP_ADDRESS
+
+    read "Next, I'll need to know the location of your modem: " PATH_TO_MODEM
+
+    read "After that, I'll need your RX Freqency: " RX_FREQ
+
+    read "Now I need your TX Frequency: " TX_FREQ
+
+    echo "Okay, just a few more, I promise..."
+
+    read "RFSS ID: " RFSS_ID
+
+    read "Site ID: " SITE_ID
+
+    read "System ID: " SYS_ID
+
+    read "Network ID: " NET_ID
+
+    read "NAC (Network Access Code): " NAC_CODE
+
+    read "Super Group: " SUPER_GROUP
+
+    read "Are we flashing a hotspot today? **WARNING** ONLY MMDVM-DUAL-HAT IS SUPPORTED AT THIS TIME **WARNING** IF YOU ARE UNSURE PRESS N! [Y/N]: " respA
+
+    while true
+    do
+        case $respA in
+            Y | y)
+            FLASH=1
+            break
+            ;;
+            N | n)
+            FLASH=0
+            break
+            ;;
+            *)
+                echo "Please type Y or N. "
+                read "Are we flashing a hotspot today? **WARNING** ONLY MMDVM-DUAL-HAT IS SUPPORTED AT THIS TIME **WARNING** IF YOU ARE UNSURE PRESS N! [Y/N]: " respA
+                continue        
+            ;;
+        esac  
+    done
+
+    echo "Please wait while the hamster wheels are turning..."
+
+    echo "Thank you for trying Interactive Mode Beta. Please leave feedback on Discord."
+
+    # calculate channel id from tx frequency
+
+    # prompt for channel number and voice channel number
+
+    # prompt for RCON port
+
+    # prompt for equipment ID
+
+fi
 
 
 echo \
