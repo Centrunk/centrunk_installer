@@ -1,0 +1,182 @@
+#!/bin/bash
+
+##### VARIABLE ASSIGNMENT #####
+##### DO NOT CHANGE THESE #####
+
+BASE_DIR='/opt'
+INSTALL_LOC='/opt/dvm'
+CONFIG_DIR='/opt/dvm/configs'
+CONFIG_REPO='https://github.com/lastation4/dvm-p25-config.git'
+VAULT_NAMESPACE='admin/centrunk'
+VAULT_ADDR="https://endpoints-cluster.vault.b14e7362-1499-478f-bea1-863d77f32450.aws.hashicorp.cloud:8200"
+CONFIG_FILE="$INSTALL_LOC/config.centrunk.yml"
+DEFAULT_KEYS="IP_ADDRESS NAC_CODE NET_ID SYS_ID ZEROTIER SYSTEM_PORT SYSTEM_PW"
+FW_RULE_PISTAR="iptables -A OUTPUT -p tcp --dport 8200 -j ACCEPT # Rule to allow Vault Commands"
+##### FUNCTION DEFINITIONS #####
+grep -qxF "$FW_RULE_PISTAR" /root/ipv4.fw || echo "$FW_RULE_PISTAR" >> /root/ipv4.fw
+/usr/local/sbin/pistar-firewall
+
+
+
+write_log_event()
+{
+  echo "[LOG]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+  echo $1
+}
+
+write_debug()
+{
+  echo "[DEBUG]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+}
+
+write_stderr()
+{
+  echo "[STDERR]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
+
+}
+
+replace_config()
+{
+    write_log_event "Starting configuration file reconfiguration!"
+    sed -i "s/EQUIP_ID/$EQUIP_ID/g" $1
+    sed -i "s/IP_ADDRESS/$IP_ADDRESS/g" $1
+    sed -i "s/RCON_PORT/$RCON_PORT/g" $1
+    sed -i "s/PATH_TO_MODEM/${PATH_TO_MODEM//\//\\/}/g" $1
+    sed -i "s/CHANNEL_ID/$CID/g" $1
+    sed -i "s/RFSS_ID/$RFSS_ID/g" $1
+    sed -i "s/SITE_ID/$SITE_ID/g" $1
+    sed -i "s/SYS_ID/$SYS_ID/g" $1
+    sed -i "s/NET_ID/$NET_ID/g" $1
+    sed -i "s/NAC_CODE/$NAC_CODE/g" $1
+    sed -i "s/SUPER_GROUP/$SUPER_GROUP/g" $1
+    sed -i "s/CHANNEL_NUMBER/$CHID/g" $1
+    sed -i "s/VCN/$VCN/g" $1
+    # this is sed'd in for "security"
+    sed -i "s/REDACTED/CENTRUNK/g" $1
+    sed -i "s/P_CENTRUNK/62030/g" $1
+    write_log_event "Done replacing default values in config."
+}
+
+
+# $1 key
+# $2 config JSON from Vault
+
+replace_config_key_value()
+{
+  sed -i "s/$1/$(echo $2 | jq .data.data.$1)/g" $CONFIG_FILE
+}
+
+# $1 key
+# $2 entitlement
+# $3 API_STRING
+get_key_value()
+{
+  curl --header "X-Vault-Token: $2" \
+    --header "X-Vault-Namespace: $VAULT_NAMESPACE" \
+    --request  GET \
+    $3 | jq '.data.data.'$1'' | tr -d '"'
+}
+
+echo "Welcome to the Centrunk Installer." 
+write_log_event "Beginning installation..."
+
+##### VARIABLE ASSIGNMENT #####
+while true
+do
+    read -p "Enter your Equipment ID Number. Enter [0] if you don't have one.  " response
+    case $response in
+        0)
+            echo "Please contact the Centrunk System Administrators to config your hotspot. 
+            Leaving this unconfigured for now and refusing to enable service..."
+            echo "Please run /opt/dvm/configs/config_centrunk to configure your hotspot at a later time."
+            exit 2
+        ;;
+        *)
+            read -p "Enter your Centrunk Entitlement ID: " entitlement
+            break
+        ;;
+    esac
+done
+
+# Fetch the config files given the CPE Activation Codes
+
+echo $entitlement
+echo $response
+
+CPE_CONFIG=$(curl --header "X-Vault-Token: $entitlement" \
+    $VAULT_ADDR/v1/admin/centrunk/configdb/data/cpe/$response | jq -r ".data")
+
+
+write_log_event "Actually starting the install now!"
+sleep 1
+echo "You may see a bunch of shit you may or may not recognize
+Don't worry about it. It's the program installing and creating itself. Woo!"
+sleep 3
+
+write_log_event "Permissions updating..."
+chmod +x $INSTALL_LOC/start-dvm.sh $INSTALL_LOC/stop-dvm.sh $INSTALL_LOC/dvm-watchdog.sh $INSTALL_LOC/stop-watchdog.sh
+
+#install default configs from git
+
+write_log_event "Checking out default configurations from GitHub..."
+git clone $CONFIG_REPO $CONFIG_DIR
+
+## here we convert the config into something Vault can use.
+
+mv /opt/dvm/config.p25.yml /opt/dvm/config.centrunk.yml
+apt install libyaml-perl libjson-perl 
+JSON_CONFIG=$(perl -MYAML::XS=LoadFile -MJSON::XS=encode_json -e 'for (@ARGV) { for (LoadFile($_)) { print encode_json($_),"\n" } }' /opt/dvm/config.centrunk.yml)
+echo $JSON_CONFIG > payload.json
+# store the config
+
+vault kv put configdb/data/cpe%2F$response @payload.json
+
+## get the ZeroTier ID from Vault
+
+ZEROTIER=get_key_value "ZEROTIER" $entitlement "$VAULT_ADDR/v1/configdb/data/system"
+
+write_log_event "Ensuring ZeroTier is installed..."
+if [ -x "$(command -v zerotier-cli)" ]
+then
+    write_log_event "ZeroTier is already installed, joining the network..."
+    zerotier-cli join $ZEROTIER
+else
+    write_log_event "ZeroTier is not installed, installing now..."
+    curl -s https://install.zerotier.com/ | bash
+    zerotier-cli join $ZEROTIER
+fi
+#install the unit file
+write_log_event "Installing the P25 systemd Service..."
+
+if [[ -f /etc/systemd/system/p25.service ]]
+then
+  systemctl stop p25.service
+  systemctl disable p25.service
+  rm -rf /etc/systemd/system/p25.service
+  systemctl daemon-reload
+fi
+
+if [[ -f /etc/systemd/system/centrunk.service ]]
+then
+  systemctl stop centrunk.service
+  systemctl disable centrunk.service
+  rm -rf /etc/systemd/system/centrunk.service
+  systemctl daemon-reload
+fi
+
+cp $CONFIG_DIR/p25.service /etc/systemd/system/centrunk.service
+write_log_event "Updating permissions on the Service..."
+chmod 664 /etc/systemd/system/centrunk.service
+systemctl daemon-reload
+write_log_event "Reloaded systemd..."
+systemctl enable centrunk.service
+#output commands
+write_log_event "!!!DVMhost install completed.!!!"
+
+##### ZEROTIER BLOCK #####
+
+echo "Please contact a system admin to auth you on the network. Provide them with this output: " 
+zerotier-cli info
+echo "Everything should be done installing...
+To start Centrunk, run \"sudo systemctl start centrunk.service\""
+exit 0

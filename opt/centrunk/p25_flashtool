@@ -127,8 +127,8 @@ else
 fi
 
 write_log_event "Shutting down Centrunk Service..."
-systemctl stop p25.service
-systemctl disable p25.service
+systemctl stop centrunk.service
+systemctl disable centrunk.service
 write_log_event "Entering the Firmware Block..."
 ###### FIRMWARE BLOCK #####
 #clone out the firmware and tools
@@ -151,6 +151,6 @@ case $FLASHFILE in
   ;;
 esac
 set +e
-systemctl enable p25.service
-systemctl start p25.service
+systemctl enable centrunk.service
+systemctl start centrunk.service
 exit 0
