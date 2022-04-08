@@ -16,8 +16,6 @@ FW_RULE_PISTAR="iptables -A OUTPUT -p tcp --dport 8200 -j ACCEPT # Rule to allow
 grep -qxF "$FW_RULE_PISTAR" /root/ipv4.fw || echo "$FW_RULE_PISTAR" >> /root/ipv4.fw
 /usr/local/sbin/pistar-firewall
 
-
-
 write_log_event()
 {
   echo "[LOG]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
@@ -34,29 +32,6 @@ write_stderr()
   echo "[STDERR]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
 
 }
-
-replace_config()
-{
-    write_log_event "Starting configuration file reconfiguration!"
-    sed -i "s/EQUIP_ID/$EQUIP_ID/g" $1
-    sed -i "s/IP_ADDRESS/$IP_ADDRESS/g" $1
-    sed -i "s/RCON_PORT/$RCON_PORT/g" $1
-    sed -i "s/PATH_TO_MODEM/${PATH_TO_MODEM//\//\\/}/g" $1
-    sed -i "s/CHANNEL_ID/$CID/g" $1
-    sed -i "s/RFSS_ID/$RFSS_ID/g" $1
-    sed -i "s/SITE_ID/$SITE_ID/g" $1
-    sed -i "s/SYS_ID/$SYS_ID/g" $1
-    sed -i "s/NET_ID/$NET_ID/g" $1
-    sed -i "s/NAC_CODE/$NAC_CODE/g" $1
-    sed -i "s/SUPER_GROUP/$SUPER_GROUP/g" $1
-    sed -i "s/CHANNEL_NUMBER/$CHID/g" $1
-    sed -i "s/VCN/$VCN/g" $1
-    # this is sed'd in for "security"
-    sed -i "s/REDACTED/CENTRUNK/g" $1
-    sed -i "s/P_CENTRUNK/62030/g" $1
-    write_log_event "Done replacing default values in config."
-}
-
 
 # $1 key
 # $2 config JSON from Vault

@@ -1,0 +1,3 @@
+[submodule "opt/dvm"]
+	path = opt/dvm
+	url = https://github.com/DVMProject/dvmhost.git
