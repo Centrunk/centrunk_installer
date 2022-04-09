@@ -352,7 +352,7 @@ systemctl enable centrunk.service
 # add a user called Centrunk for remote admin commands
 # this is an optional feature that will not be automatically enabled and require deliberate user action to enable.
 
-if [[ -f /opt/centrunk/enable-remote-admin]]
+if [[ -f /opt/centrunk/enable-remote-admin ]]
 then
   if id "centrunk" &>/dev/null; then
     true
