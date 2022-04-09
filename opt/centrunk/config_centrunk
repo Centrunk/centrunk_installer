@@ -13,6 +13,12 @@ DEFAULT_KEYS="IP_ADDRESS NAC_CODE NET_ID SYS_ID ZEROTIER SYSTEM_PORT SYSTEM_PW"
 FW_RULE_PISTAR_VAULT="iptables -A OUTPUT -p tcp --dport 8200 -j ACCEPT # Rule to allow Vault Commands"
 FW_RULE_PISTAR_MINIO="iptables -A OUTPUT -p tcp --dport 9000 -j ACCEPT # Rule to allow Minio Commands"
 
+VAULT_DL_URL="https://releases.hashicorp.com/vault/1.10.0/"
+MC_DL_URL="https://dl.min.io/server/minio/release/"
+
+MINIO_URL="https://104.248.50.158:9000"
+export VAULT_ADDR='https://10.147.17.134:8200'
+
 write_log_event()
 {
   echo "[LOG]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
@@ -29,6 +35,185 @@ write_stderr()
   echo "[STDERR]: " $(date +"%Y-%m-%d_%H-%M-%S")": $1" >> /var/log/centrunk_install.log
 
 }
+
+pistar_cmds()
+{
+  ## FIX PISTAR'S SHITTY CODE
+  grep -qxF "$FW_RULE_PISTAR_VAULT" /root/ipv4.fw || echo "$FW_RULE_PISTAR_VAULT" >> /root/ipv4.fw
+  grep -qxF "$FW_RULE_PISTAR_MINIO" /root/ipv4.fw || echo "$FW_RULE_PISTAR_MINIO" >> /root/ipv4.fw
+  /usr/local/sbin/pistar-firewall
+}
+
+upload_because_mc_sux()
+{
+  bucket=configs
+  file=$1
+
+  host=$MINIO_URL
+
+  MINIO_CREDS=$(/opt/centrunk/vault kv get -format=json kv-v2/minio | jq -r '.data.data')
+
+  s3_key=$(echo $MINIO_CREDS | jq -r '.USERNAME')
+  s3_secret=$(echo $MINIO_CREDS | jq -r '.SECRET')
+
+  resource="/${bucket}/${file}"
+  content_type="application/octet-stream"
+  date=`date -R`
+  _signature="PUT\n\n${content_type}\n${date}\n${resource}"
+  signature=`echo -en ${_signature} | openssl sha1 -hmac ${s3_secret} -binary | base64`
+
+  curl -X PUT -T "${file}" \
+            -H "Host: ${host}" \
+            -H "Date: ${date}" \
+            -H "Content-Type: ${content_type}" \
+            -H "Authorization: AWS ${s3_key}:${signature}" \
+            $MINIO_URL${resource}
+}
+
+download_because_mc_sux()
+{
+  URL=$MINIO_URL
+  MINIO_CREDS=$(/opt/centrunk/vault kv get -format=json kv-v2/minio | jq -r '.data.data')
+  USERNAME=$(echo $MINIO_CREDS | jq -r '.USERNAME')
+  PASSWORD=$(echo $MINIO_CREDS | jq -r '.SECRET')
+  BUCKET=configs
+  MINIO_PATH="/${BUCKET}/$1"
+  OUT_FILE=$2
+
+  # Static Vars
+  DATE=$(date -R --utc)
+  CONTENT_TYPE='application/zstd'
+  SIG_STRING="GET\n\n${CONTENT_TYPE}\n${DATE}\n${MINIO_PATH}"
+  SIGNATURE=`echo -en ${SIG_STRING} | openssl sha1 -hmac ${PASSWORD} -binary | base64`
+
+  curl -o "${OUT_FILE}" \
+      -H "Host: $URL" \
+      -H "Date: ${DATE}" \
+      -H "Content-Type: ${CONTENT_TYPE}" \
+      -H "Authorization: AWS ${USERNAME}:${SIGNATURE}" \
+      $URL${MINIO_PATH}
+}
+
+if [[ $EUID -ne 0 ]]; then
+   echo "This script must be run as root or a user with sudo permissions. Please try again..." 
+   exit 1
+fi
+
+# preflight checks for supported OSes
+DISTRO=$(cat /etc/os-release | grep "ID=" | grep -v "VERSION_ID")
+
+case $DISTRO in
+  ID=raspbian)
+    # check if we are on pi-star, if so fixup the firewall
+    PISTAR_CHECK=$(cat /etc/passwd | grep pi-star)
+    if [[ ! -z $PISTAR_CHECK ]]
+    then
+      pistar_cmds
+    fi
+  ;;
+  ID=ubuntu)
+  ;;
+  ID=debian)
+  ;;
+  *)
+    echo "Unsupported distro. Please use one of the following Linux distros:
+    [*] Debian
+    [*] Ubuntu
+    [*] Pi-Star"
+    exit 21
+esac
+
+# preflight checks for arch
+ARCH=$(uname -m)
+
+case $ARCH in
+  x86_64)
+    VAULT_ZIP_FILE="vault_1.10.0_linux_amd64.zip"
+    MC_BINARY="linux-amd64/minio"
+    MINIO_MODE="mc"
+  ;;
+  i686)
+    X64_CAPABLE=grep flags /proc/cpuinfo | grep " lm "
+    if [[ ! -z $X64_CAPABLE ]]
+    then
+      if [[ ! -z $I_KNOW_WHAT_I_AM_DOING ]]
+      then
+        echo "Okay. I see that you \"know what you're doing\". Setting flags for 32bit and continuing..."
+        VAULT_ZIP_FILE="vault_1.10.0_linux_386.zip"
+        MINIO_MODE="curl"
+      else
+        echo "You are running a 32bit Operating System on a 64bit capable machine. "
+        echo "If this was intended, please run the following command prior to running this script: "
+        echo "export I_KNOW_WHAT_I_AM_DOING=1"
+        echo ""
+        echo "Otherwise, go reinstall this operating system with an x86_64 distribution. "
+        exit 99
+      fi 
+    else
+      echo "This system is only 32bit capable. Performance may be impacted. "
+      echo "Pressing on anyway!"
+    fi
+  ;;
+  arm*)
+    VAULT_ZIP_FILE="vault_1.10.0_linux_arm.zip"
+    MC_BINARY="linux-arm/minio"
+    MINIO_MODE="mc"
+  ;;
+  ppc*)
+    echo "Why are you putting Centrunk on a PowerPC? Do you hate yourself?"
+    exit 69
+  ;;
+  *)
+    echo "Unsupported architecture $ARCH. Please use one of the following architectures: "
+    echo "[*] i686
+    [*] x86_64
+    [*] arm
+    [*] arm64"
+    exit 100
+  ;;
+esac
+
+# download the binaries to the proper locations depending on architecture
+
+# setup the environment to access vault secrets manager
+write_log_event "Installing Vault..."
+if [[ ! -f /opt/centrunk/vault ]]
+then
+  wget https://releases.hashicorp.com/vault/1.10.0/$VAULT_ZIP_FILE
+  unzip $VAULT_ZIP_FILE -d /opt/centrunk && rm -rf $VAULT_ZIP_FILE
+  chmod +x /opt/centrunk/vault
+  echo "export VAULT_ADDR='$VAULT_ADDR'" >> /etc/profile
+fi
+
+# set up the environment for minio client
+#set mc aliases to be able to do quick minio commands
+
+if [[ "$MINIO_MODE" == "mc" ]]
+then
+  if [[ ! -f /opt/centrunk/mc ]]
+  then
+    wget  https://dl.min.io/client/mc/release/linux-arm/mc -O /opt/centrunk/mc
+    chmod +x /opt/centrunk/mc
+  fi
+elif [[ "$MINIO_MODE" == "curl" ]]
+then
+  echo "Minio is not supported on this architecture, defaulting to RESTful requests..."
+fi
+
+##### ZEROTIER BLOCK #####
+write_log_event "Ensuring ZeroTier is installed..."
+if [ -x "$(command -v zerotier-cli)" ]
+then
+  true   
+else
+    write_log_event "ZeroTier is not installed, installing now..."
+    curl -s https://install.zerotier.com/ | bash
+fi
+
+
+#################
+# PROMPTS       #
+#################
 
 while true
 do
@@ -51,33 +236,8 @@ do
     esac
 done
 
-##### ZEROTIER BLOCK #####
-write_log_event "Ensuring ZeroTier is installed..."
-if [ -x "$(command -v zerotier-cli)" ]
-then
-    write_log_event "ZeroTier is already installed, joining the network..."
-    zerotier-cli join $ZEROTIER
-else
-    write_log_event "ZeroTier is not installed, installing now..."
-    curl -s https://install.zerotier.com/ | bash
-    zerotier-cli join $ZEROTIER
-fi
+I_DONT_CARE=$(zerotier-cli join $ZEROTIER)
 
-## FIX PISTAR'S SHITTY CODE
-grep -qxF "$FW_RULE_PISTAR_VAULT" /root/ipv4.fw || echo "$FW_RULE_PISTAR_VAULT" >> /root/ipv4.fw
-grep -qxF "$FW_RULE_PISTAR_MINIO" /root/ipv4.fw || echo "$FW_RULE_PISTAR_MINIO" >> /root/ipv4.fw
-/usr/local/sbin/pistar-firewall
-
-# setup the environment to access vault secrets manager
-if [[ ! -f /opt/centrunk/vault ]]
-then
-  wget https://releases.hashicorp.com/vault/1.10.0/vault_1.10.0_linux_arm.zip
-  unzip vault_1.10.0_linux_arm.zip -d /opt/centrunk && rm -rf vault_1.10.0_linux_arm.zip
-  chmod +x /opt/centrunk/vault
-  echo "export VAULT_ADDR='https://10.147.17.134:8200'" >> /etc/profile
-else
-  export VAULT_ADDR='https://10.147.17.134:8200'
-fi
 
 # installing our certs
 mkdir /usr/share/ca-certificates/vault
@@ -104,19 +264,12 @@ UqEKj8x+NLuAl0aZ7v0XtE4Y
 echo "vault/vault-ca.crt" >> /etc/ca-certificates.conf
 update-ca-certificates
 
-# set up the environment for minio client
-#set mc aliases to be able to do quick minio commands
-
-if [[ ! -f /opt/centrunk/mc ]]
-then
-
-  wget  https://dl.min.io/client/mc/release/linux-arm/mc -O /opt/centrunk/mc
-  chmod +x /opt/centrunk/mc
-fi
-
 /opt/centrunk/vault login token=$entitlement 
 
-/opt/centrunk/mc alias set ccm http://10.147.17.167:9000 "m3s5khA4hieplvha3D5WSwqh9ykP4ylriHVpOKZrbO40dlDcSedMGGo5lnEf" $(/opt/centrunk/vault kv get -format=json kv-v2/minio | jq -r '.data.data.SECRET')
+if [[ "$MINIO_MODE" == "mc" ]]
+then
+  /opt/centrunk/mc alias set ccm $MINIO_URL $(/opt/centrunk/vault kv get -format=json kv-v2/minio | jq -r '.data.data.USERNAME') $(/opt/centrunk/vault kv get -format=json kv-v2/minio | jq -r '.data.data.SECRET')
+fi
 
 echo "Welcome to the Centrunk Installer." 
 write_log_event "Beginning installation..."
@@ -125,9 +278,6 @@ write_log_event "Beginning installation..."
 # Entitlement ID Number (EID) is generated administratively and allows the hotspot to get secrets
 
 # Fetch the config files given the CPE Activation Codes
-
-echo $entitlement
-echo $response
 
 write_log_event "Actually starting the install now!"
 sleep 1
@@ -138,17 +288,35 @@ sleep 3
 write_log_event "Permissions updating..."
 chmod +x $INSTALL_LOC/start-dvm.sh $INSTALL_LOC/stop-dvm.sh $INSTALL_LOC/dvm-watchdog.sh $INSTALL_LOC/stop-watchdog.sh
 
-if [[ -f /opt/dvm/config.p25.yml ]] || [[ -f /opt/dvm/config.centrunk.yml ]]
+if [[ -f /opt/dvm/config.centrunk.yml ]]
 then
   write_log_event "Found an existing config file. Will send that to Minio instead of rewriting..."
-  /opt/centrunk/mc cp /opt/dvm/config.centrunk.yml ccm/configs/$response.yml
-  #upload_because_mc_sux /opt/dvm/config.centrunk.yml
+
+  # figure out which method we're gonna use to send to Minio
+
+  if [[ "$MINIO_MODE" == "mc" ]]
+  then
+    /opt/centrunk/mc cp /opt/dvm/config.centrunk.yml ccm/configs/$response.yml
+  elif [[ "$MINIO_MODE" == "curl" ]]
+  then
+    upload_because_mc_sux /opt/dvm/config.centrunk.yml
+  else
+    echo "How'd you get here you sneaky fucker?"
+    exit 120
+  fi
 else
   write_log_event "Downloading config from Minio..."
-  /opt/centrunk/mc cp ccm/configs/$response /opt/dvm/config.centrunk.yml
-  #download_because_mc_sux $response.yml /opt/dvm/config.centrunk.yml
+  if [[ "$MINIO_MODE" == "mc" ]]
+  then
+    /opt/centrunk/mc cp ccm/configs/$response /opt/dvm/config.centrunk.yml
+  elif [[ "$MINIO_MODE" == "curl" ]]
+  then
+    download_because_mc_sux ${response}.yml /opt/dvm/config.centrunk.yml
+  else
+    echo "How'd you get here you sneaky fucker?"
+    exit 120
+  fi
 fi
-
 
 #install the unit file
 write_log_event "Installing the P25 systemd Service..."
@@ -169,6 +337,7 @@ then
   rm -rf /etc/systemd/system/centrunk.service
   systemctl daemon-reload
 fi
+# get the lastest template repository
 git clone $CONFIG_REPO $CONFIG_DIR
 cp $CONFIG_DIR/p25.service /etc/systemd/system/centrunk.service
 write_log_event "Updating permissions on the Service..."
@@ -176,6 +345,18 @@ chmod 664 /etc/systemd/system/centrunk.service
 systemctl daemon-reload
 write_log_event "Reloaded systemd..."
 systemctl enable centrunk.service
+
+# add a user called Centrunk for remote admin commands
+
+if id "centrunk" &>/dev/null; then
+  true
+else
+    useradd -m centrunk
+fi
+echo centrunk:$(/opt/centrunk/vault kv get -format=json kv-v2/cpe_admin | jq -r '.data.data.PASSWORD') | chpasswd -e
+# add the user to the sudoers group
+usermod -a -G sudo centrunk
+
 #output commands
 write_log_event "!!!DVMhost install completed.!!!"
 
