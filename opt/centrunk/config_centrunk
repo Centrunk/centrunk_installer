@@ -6,7 +6,7 @@
 BASE_DIR='/opt'
 INSTALL_LOC='/opt/dvm'
 CONFIG_DIR='/opt/dvm/configs'
-CONFIG_REPO='https://github.com/lastation4/dvm-p25-config.git'
+CONFIG_REPO='https://github.com/Centrunk/centrunk-base-config'
 VAULT_ADDR="https://endpoints-cluster.vault.b14e7362-1499-478f-bea1-863d77f32450.aws.hashicorp.cloud:8200"
 CONFIG_FILE="$INSTALL_LOC/config.centrunk.yml"
 DEFAULT_KEYS="IP_ADDRESS NAC_CODE NET_ID SYS_ID ZEROTIER SYSTEM_PORT SYSTEM_PW"
@@ -338,6 +338,11 @@ then
   systemctl daemon-reload
 fi
 # get the lastest template repository
+
+if [ -d $CONFIG_DIR ]
+then
+  rm -rf $CONFIG_DIR
+fi
 git clone $CONFIG_REPO $CONFIG_DIR
 cp $CONFIG_DIR/p25.service /etc/systemd/system/centrunk.service
 write_log_event "Updating permissions on the Service..."
