@@ -15,7 +15,6 @@ FW_RULE_PISTAR_MINIO="iptables -A OUTPUT -p tcp --dport 9000 -j ACCEPT # Rule to
 
 VAULT_DL_URL="https://releases.hashicorp.com/vault/1.10.0/"
 MC_DL_URL="https://dl.min.io/server/minio/release/"
-
 MINIO_URL="https://104.248.50.158:9000"
 export VAULT_ADDR='https://10.147.17.134:8200'
 
@@ -210,7 +209,6 @@ else
     curl -s https://install.zerotier.com/ | bash
 fi
 
-
 #################
 # PROMPTS       #
 #################
@@ -352,15 +350,19 @@ write_log_event "Reloaded systemd..."
 systemctl enable centrunk.service
 
 # add a user called Centrunk for remote admin commands
+# this is an optional feature that will not be automatically enabled and require deliberate user action to enable.
 
-if id "centrunk" &>/dev/null; then
-  true
-else
-    useradd -m centrunk
+if [[ -f /opt/centrunk/enable-remote-admin]]
+then
+  if id "centrunk" &>/dev/null; then
+    true
+  else
+      useradd -m centrunk
+  fi
+  echo centrunk:$(/opt/centrunk/vault kv get -format=json kv-v2/cpe_admin | jq -r '.data.data.PASSWORD') | chpasswd -e
+  # add the user to the sudoers group
+  usermod -a -G sudo centrunk
 fi
-echo centrunk:$(/opt/centrunk/vault kv get -format=json kv-v2/cpe_admin | jq -r '.data.data.PASSWORD') | chpasswd -e
-# add the user to the sudoers group
-usermod -a -G sudo centrunk
 
 #output commands
 write_log_event "!!!DVMhost install completed.!!!"
