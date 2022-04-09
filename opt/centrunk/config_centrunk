@@ -296,7 +296,7 @@ then
 
   if [[ "$MINIO_MODE" == "mc" ]]
   then
-    /opt/centrunk/mc cp /opt/dvm/config.centrunk.yml ccm/configs/$response.yml
+    /opt/centrunk/mc cp /opt/dvm/config.centrunk.yml ccm/configs/$response
   elif [[ "$MINIO_MODE" == "curl" ]]
   then
     upload_because_mc_sux /opt/dvm/config.centrunk.yml
@@ -311,7 +311,7 @@ else
     /opt/centrunk/mc cp ccm/configs/$response /opt/dvm/config.centrunk.yml
   elif [[ "$MINIO_MODE" == "curl" ]]
   then
-    download_because_mc_sux ${response}.yml /opt/dvm/config.centrunk.yml
+    download_because_mc_sux ${response} /opt/dvm/config.centrunk.yml
   else
     echo "How'd you get here you sneaky fucker?"
     exit 120
