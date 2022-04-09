@@ -112,7 +112,7 @@ replace_config()
     sed -i "s/VCN/$VCN/g" $1
     # this is sed'd in for "security"
     sed -i "s/REDACTED/CENTRUNK/g" $1
-    sed -i "s/P_CENTRUNK/62030/g" $1
+    sed -i "s/P_REDACTED/62030/g" $1
     write_log_event "Done replacing default values in config."
 } 2>write_stderr
 

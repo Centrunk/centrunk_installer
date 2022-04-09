@@ -7,14 +7,11 @@ BASE_DIR='/opt'
 INSTALL_LOC='/opt/dvm'
 CONFIG_DIR='/opt/dvm/configs'
 CONFIG_REPO='https://github.com/lastation4/dvm-p25-config.git'
-VAULT_NAMESPACE='admin/centrunk'
 VAULT_ADDR="https://endpoints-cluster.vault.b14e7362-1499-478f-bea1-863d77f32450.aws.hashicorp.cloud:8200"
 CONFIG_FILE="$INSTALL_LOC/config.centrunk.yml"
 DEFAULT_KEYS="IP_ADDRESS NAC_CODE NET_ID SYS_ID ZEROTIER SYSTEM_PORT SYSTEM_PW"
-FW_RULE_PISTAR="iptables -A OUTPUT -p tcp --dport 8200 -j ACCEPT # Rule to allow Vault Commands"
-##### FUNCTION DEFINITIONS #####
-grep -qxF "$FW_RULE_PISTAR" /root/ipv4.fw || echo "$FW_RULE_PISTAR" >> /root/ipv4.fw
-/usr/local/sbin/pistar-firewall
+FW_RULE_PISTAR_VAULT="iptables -A OUTPUT -p tcp --dport 8200 -j ACCEPT # Rule to allow Vault Commands"
+FW_RULE_PISTAR_MINIO="iptables -A OUTPUT -p tcp --dport 9000 -j ACCEPT # Rule to allow Minio Commands"
 
 write_log_event()
 {
@@ -33,32 +30,9 @@ write_stderr()
 
 }
 
-# $1 key
-# $2 config JSON from Vault
-
-replace_config_key_value()
-{
-  sed -i "s/$1/$(echo $2 | jq .data.data.$1)/g" $CONFIG_FILE
-}
-
-# $1 key
-# $2 entitlement
-# $3 API_STRING
-get_key_value()
-{
-  curl --header "X-Vault-Token: $2" \
-    --header "X-Vault-Namespace: $VAULT_NAMESPACE" \
-    --request  GET \
-    $3 | jq '.data.data.'$1'' | tr -d '"'
-}
-
-echo "Welcome to the Centrunk Installer." 
-write_log_event "Beginning installation..."
-
-##### VARIABLE ASSIGNMENT #####
 while true
 do
-    read -p "Enter your Equipment ID Number. Enter [0] if you don't have one.  " response
+    read -p "Please enter your Centrunk Equipment ID Number (EIN): " response
     case $response in
         0)
             echo "Please contact the Centrunk System Administrators to config your hotspot. 
@@ -66,50 +40,18 @@ do
             echo "Please run /opt/dvm/configs/config_centrunk to configure your hotspot at a later time."
             exit 2
         ;;
-        *)
+        cpe_*)
             read -p "Enter your Centrunk Entitlement ID: " entitlement
+            read -p "Enter the ZeroTier Network ID (ZTNID): " ZEROTIER
             break
+        ;;
+        *)
+          echo "Invalid Entry...try again!"
         ;;
     esac
 done
 
-# Fetch the config files given the CPE Activation Codes
-
-echo $entitlement
-echo $response
-
-CPE_CONFIG=$(curl --header "X-Vault-Token: $entitlement" \
-    $VAULT_ADDR/v1/admin/centrunk/configdb/data/cpe/$response | jq -r ".data")
-
-
-write_log_event "Actually starting the install now!"
-sleep 1
-echo "You may see a bunch of shit you may or may not recognize
-Don't worry about it. It's the program installing and creating itself. Woo!"
-sleep 3
-
-write_log_event "Permissions updating..."
-chmod +x $INSTALL_LOC/start-dvm.sh $INSTALL_LOC/stop-dvm.sh $INSTALL_LOC/dvm-watchdog.sh $INSTALL_LOC/stop-watchdog.sh
-
-#install default configs from git
-
-write_log_event "Checking out default configurations from GitHub..."
-git clone $CONFIG_REPO $CONFIG_DIR
-
-## here we convert the config into something Vault can use.
-
-mv /opt/dvm/config.p25.yml /opt/dvm/config.centrunk.yml
-apt install libyaml-perl libjson-perl 
-JSON_CONFIG=$(perl -MYAML::XS=LoadFile -MJSON::XS=encode_json -e 'for (@ARGV) { for (LoadFile($_)) { print encode_json($_),"\n" } }' /opt/dvm/config.centrunk.yml)
-echo $JSON_CONFIG > payload.json
-# store the config
-
-vault kv put configdb/data/cpe%2F$response @payload.json
-
-## get the ZeroTier ID from Vault
-
-ZEROTIER=get_key_value "ZEROTIER" $entitlement "$VAULT_ADDR/v1/configdb/data/system"
-
+##### ZEROTIER BLOCK #####
 write_log_event "Ensuring ZeroTier is installed..."
 if [ -x "$(command -v zerotier-cli)" ]
 then
@@ -120,9 +62,98 @@ else
     curl -s https://install.zerotier.com/ | bash
     zerotier-cli join $ZEROTIER
 fi
+
+## FIX PISTAR'S SHITTY CODE
+grep -qxF "$FW_RULE_PISTAR_VAULT" /root/ipv4.fw || echo "$FW_RULE_PISTAR_VAULT" >> /root/ipv4.fw
+grep -qxF "$FW_RULE_PISTAR_MINIO" /root/ipv4.fw || echo "$FW_RULE_PISTAR_MINIO" >> /root/ipv4.fw
+/usr/local/sbin/pistar-firewall
+
+# setup the environment to access vault secrets manager
+if [[ ! -f /opt/centrunk/vault ]]
+then
+  wget https://releases.hashicorp.com/vault/1.10.0/vault_1.10.0_linux_arm.zip
+  unzip vault_1.10.0_linux_arm.zip -d /opt/centrunk && rm -rf vault_1.10.0_linux_arm.zip
+  chmod +x /opt/centrunk/vault
+  echo "export VAULT_ADDR='https://10.147.17.134:8200'" >> /etc/profile
+else
+  export VAULT_ADDR='https://10.147.17.134:8200'
+fi
+
+# installing our certs
+mkdir /usr/share/ca-certificates/vault
+echo "-----BEGIN CERTIFICATE-----
+MIIDPjCCAiagAwIBAgIRAKzGuEk9JW9Iifz73U65W8gwDQYJKoZIhvcNAQELBQAw
+NTEUMBIGA1UEChMLTG9nIENvdXJpZXIxHTAbBgNVBAMTFHZhdWx0LmNlbnRydW5r
+LmxvY2FsMB4XDTIyMDQwODIyMDYzNloXDTMyMDQwNTIyMDYzNlowNTEUMBIGA1UE
+ChMLTG9nIENvdXJpZXIxHTAbBgNVBAMTFHZhdWx0LmNlbnRydW5rLmxvY2FsMIIB
+IjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA38eVxnFcUc4mpWqgmgk3r7ZT
+nN4XGGrVzYtavInxmOwWzrI68Zd12tVWfHAJqXEiF4kHHvDgMq+qp0x/gYebywvV
+26ogZ7gLDC50IblC1Ph2yUw7YY4a7QTNTgEgLZbi72ZzCBkUYv+gOyDZJb1kJtxG
+R4oYzjT8jSlvx3KvT5ZNmtkoeHvUy/YPzROamQ2ugsOUl9pZpZKVd9DFMr0GkY/g
+XwLjaTXXXuSsYz+Ru039FmFCQVebpLrjOrjWtSt8+owOKJ/PYuGsw5tn1DUhwqQL
+FnHKB174dp4o4lAjpIuuC/ZM/7ZfQOi1zvQy2NnUjsqL+ZIiWr+t7waOWrcEGQID
+AQABo0kwRzAOBgNVHQ8BAf8EBAMCAqQwEwYDVR0lBAwwCgYIKwYBBQUHAwEwDwYD
+VR0TAQH/BAUwAwEB/zAPBgNVHREECDAGhwQKkxGGMA0GCSqGSIb3DQEBCwUAA4IB
+AQCCH5hCghxh9s1peMc+EOLEeQqfzl0vW/Owb36lQjdvvaC9HHi24Lzth/p8rBSp
+ilDDPhL3ypkrQ4AjcRTG4Pk+Y9jcpWgnsEMLnXX+A+QgO2fAnmc2+dgQgyktfz5n
+hxOqKvsA80SwhYrlXxx+ea1MxqQfGMeJBhNrjLUUuw4uG/s0zPAnAzcvI2voJBWM
+oAyms5MJGCR/p17roHEfAF30PNDh9QmzLghKrjUwlyMsQasINVqo4LeOEJIqKUeZ
+Rk7syOD86q8lj+kl1hzbKzxWfw6cvN41APl0gEXk1lNQsMV7LiINCj90lBBE6adC
+UqEKj8x+NLuAl0aZ7v0XtE4Y
+-----END CERTIFICATE-----" > /usr/share/ca-certificates/vault/vault-ca.crt
+echo "vault/vault-ca.crt" >> /etc/ca-certificates.conf
+update-ca-certificates
+
+# set up the environment for minio client
+#set mc aliases to be able to do quick minio commands
+
+if [[ ! -f /opt/centrunk/mc ]]
+then
+
+  wget  https://dl.min.io/client/mc/release/linux-arm/mc -O /opt/centrunk/mc
+  chmod +x /opt/centrunk/mc
+fi
+
+/opt/centrunk/vault login token=$entitlement 
+
+/opt/centrunk/mc alias set ccm http://10.147.17.167:9000 "m3s5khA4hieplvha3D5WSwqh9ykP4ylriHVpOKZrbO40dlDcSedMGGo5lnEf" $(/opt/centrunk/vault kv get -format=json kv-v2/minio | jq -r '.data.data.SECRET')
+
+echo "Welcome to the Centrunk Installer." 
+write_log_event "Beginning installation..."
+
+# Equipment ID Number (EIN) is generated on the hotspot
+# Entitlement ID Number (EID) is generated administratively and allows the hotspot to get secrets
+
+# Fetch the config files given the CPE Activation Codes
+
+echo $entitlement
+echo $response
+
+write_log_event "Actually starting the install now!"
+sleep 1
+echo "You may see a bunch of shit you may or may not recognize
+Don't worry about it. It's the program installing and creating itself. Woo!"
+sleep 3
+
+write_log_event "Permissions updating..."
+chmod +x $INSTALL_LOC/start-dvm.sh $INSTALL_LOC/stop-dvm.sh $INSTALL_LOC/dvm-watchdog.sh $INSTALL_LOC/stop-watchdog.sh
+
+if [[ -f /opt/dvm/config.p25.yml ]] || [[ -f /opt/dvm/config.centrunk.yml ]]
+then
+  write_log_event "Found an existing config file. Will send that to Minio instead of rewriting..."
+  /opt/centrunk/mc cp /opt/dvm/config.centrunk.yml ccm/configs/$response.yml
+  #upload_because_mc_sux /opt/dvm/config.centrunk.yml
+else
+  write_log_event "Downloading config from Minio..."
+  /opt/centrunk/mc cp ccm/configs/$response /opt/dvm/config.centrunk.yml
+  #download_because_mc_sux $response.yml /opt/dvm/config.centrunk.yml
+fi
+
+
 #install the unit file
 write_log_event "Installing the P25 systemd Service..."
 
+# yeeting the p25 service in favor of naming it centrunk <3
 if [[ -f /etc/systemd/system/p25.service ]]
 then
   systemctl stop p25.service
@@ -138,7 +169,7 @@ then
   rm -rf /etc/systemd/system/centrunk.service
   systemctl daemon-reload
 fi
-
+git clone $CONFIG_REPO $CONFIG_DIR
 cp $CONFIG_DIR/p25.service /etc/systemd/system/centrunk.service
 write_log_event "Updating permissions on the Service..."
 chmod 664 /etc/systemd/system/centrunk.service
@@ -148,10 +179,11 @@ systemctl enable centrunk.service
 #output commands
 write_log_event "!!!DVMhost install completed.!!!"
 
-##### ZEROTIER BLOCK #####
-
 echo "Please contact a system admin to auth you on the network. Provide them with this output: " 
+echo "#################################"
 zerotier-cli info
+echo "#################################"
+sleep 1
 echo "Everything should be done installing...
 To start Centrunk, run \"sudo systemctl start centrunk.service\""
 exit 0

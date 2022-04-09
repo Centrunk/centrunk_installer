@@ -3,3 +3,4 @@ Version: 0.1
 Maintainer: Steven Wilson
 Architecture: armhf
 Description: A package that contains all the software to setup a DVM hotspot on the Centrunk TRS. 
+Depends: libyaml-perl libjson-perl unzip stm32flash
