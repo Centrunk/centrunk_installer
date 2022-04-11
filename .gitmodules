@@ -1,6 +1,3 @@
 [submodule "opt/dvm"]
 	path = opt/dvm
 	url = https://github.com/DVMProject/dvmhost.git
-[submodule "opt/centrunk/dvm-p25-config"]
-	path = opt/centrunk/dvm-p25-config
-	url = https://github.com/Centrunk/dvm-p25-config.git
