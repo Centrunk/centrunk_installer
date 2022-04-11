@@ -1,6 +1,6 @@
 Package: centrunk
-Version: 1.0
+Version: 1.2
 Maintainer: Steven Wilson
 Architecture: armhf
 Description: A package that contains all the software to setup a DVM hotspot on the Centrunk TRS. 
-Depends: unzip, stm32flash
+Depends: unzip, stm32flash, jq
